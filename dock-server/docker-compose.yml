@@ -1,0 +1,95 @@
+version: '3'
+
+networks:
+  monitoring:
+    driver: bridge
+
+volumes:
+  prometheus_data: {}
+  grafana_data: {}
+  dbdata:
+    driver: local
+
+services:
+  db:
+    image: mysql
+    container_name: db
+    restart: unless-stopped
+    tty: true
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_DATABASE: data
+      MYSQL_ROOT_PASSWORD: admin
+      MYSQL_USER: kartik
+      SERVICE_TAGS: dev
+      SERVICE_NAME: mysql
+    volumes:
+      - dbdata:/var/lib/mysql/
+    networks:
+      - monitoring
+    expose:
+      - 3306
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9091:9090"
+    networks:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning/:/etc/grafana/provisioning
+      - ./grafana/config.ini:/etc/grafana/config.ini
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    environment:
+      - GF_SECURITY_ADMIN_USER=${ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    restart: unless-stopped
+    ports:
+      - "3005:3000"
+    networks:
+      - monitoring
+
+  collector-sql:
+    build: ./node-app
+    # volumes:
+    #   - ./frontend:/app
+    #   # One-way volume to use node_modules from inside image
+    #   - /app/node_modules
+    ports:
+      - "3100:3100"
+    environment:
+      - NODE_ENV=development
+    restart: unless-stopped
+    networks:
+      - monitoring
+    depends_on:
+      - db
+    command: node app.js
+
+  python-app:
+    build: ./app
+    depends_on:
+      - db
+    volumes:
+      - .:/usr/src/app
+    restart: unless-stopped
+    networks:
+      - monitoring
